@@ -19,6 +19,41 @@ private let callStateScript = """
 })();
 """
 
+private let cleanupScript = """
+(function () {
+  var css = [
+    '[data-testid="meta-ai-button"]',
+    '[data-testid="desktopDownloadBanner"]',
+    '[aria-label="Meta AI"]'
+  ].join(',') + '{display:none !important;visibility:hidden !important;pointer-events:none !important;}';
+  var style = document.createElement('style');
+  style.textContent = css;
+  (document.head || document.documentElement).appendChild(style);
+
+  var RE = /get whatsapp for (mac|windows)/i;
+  var TAGS = 'div,h1,h2,h3,h4,a,button,span,header,section,p';
+
+  function hideTextPromo() {
+    var els = document.querySelectorAll(TAGS);
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i];
+      if (el.style && el.style.display === 'none') continue;
+      if (el.children.length > 12) continue;
+      var t = el.textContent || '';
+      if (!RE.test(t)) continue;
+      var parent = el.parentElement;
+      while (parent && parent !== document.body && RE.test(parent.textContent || '') && (parent.textContent || '').length < 400) {
+        el = parent;
+        parent = el.parentElement;
+      }
+      el.style.display = 'none';
+    }
+  }
+  hideTextPromo();
+  setInterval(hideTextPromo, 2000);
+})();
+"""
+
 final class CallBannerContainer: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? {
         nil
@@ -36,6 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         configuration.websiteDataStore = ephemeralSession ? .nonPersistent() : .default()
         configuration.mediaTypesRequiringUserActionForPlayback = []
         let contentController = WKUserContentController()
+        contentController.addUserScript(WKUserScript(source: cleanupScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
         contentController.addUserScript(WKUserScript(source: callStateScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
         contentController.add(self, name: "callState")
         configuration.userContentController = contentController

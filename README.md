@@ -31,6 +31,7 @@ Attaching files still works — the OS file picker is explicit user input, not i
 - **Modern Safari user agent** — no "your browser is out of date" screen
 - **Full menu bar** — ⌘Q, ⌘C/⌘V/⌘X/⌘A, ⌘R reload, ⌘+ / ⌘− zoom, ⌘M minimize
 - **Incoming call banner** — when someone calls, a non-clickable banner slides in at the top of the window for as long as the call rings, and the ringtone plays. Accepting isn't possible (mic is blocked), so pick up on your phone — the banner disappears when the ringing ends
+- **Clean UI** — the "Get WhatsApp for Mac" promo banner and the Meta AI button are hidden automatically
 - **`--ephemeral` mode** — launch with the flag for zero persistence: every quit forgets everything
 - **Generated icon** — WhatsApp-inspired, reproducible from `scripts/AppIcon.swift`
 
