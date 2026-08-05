@@ -3,6 +3,8 @@ import WebKit
 
 private let homeURL = URL(string: "https://web.whatsapp.com")!
 private let ephemeralSession = CommandLine.arguments.contains("--ephemeral")
+private let noScripts = CommandLine.arguments.contains("--no-scripts")
+private let noRetention = CommandLine.arguments.contains("--no-retention")
 private let userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Safari/605.1.15"
 private let callStateScript = """
 (function () {
@@ -142,9 +144,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         configuration.websiteDataStore = ephemeralSession ? .nonPersistent() : .default()
         configuration.mediaTypesRequiringUserActionForPlayback = []
         let contentController = WKUserContentController()
-        contentController.addUserScript(WKUserScript(source: cleanupScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
-        contentController.addUserScript(WKUserScript(source: callStateScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
-        contentController.addUserScript(WKUserScript(source: retentionScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        if !noScripts {
+            contentController.addUserScript(WKUserScript(source: cleanupScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+            contentController.addUserScript(WKUserScript(source: callStateScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+            if !noRetention {
+                contentController.addUserScript(WKUserScript(source: retentionScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+            }
+        }
         contentController.add(self, name: "callState")
         configuration.userContentController = contentController
 
@@ -221,6 +227,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
 
     @objc func reloadPage() {
         webView.reload()
+    }
+
+    @objc func reloadWithoutCache() {
+        let store = WKWebsiteDataStore.default()
+        let types: Set<String> = [
+            WKWebsiteDataTypeDiskCache,
+            WKWebsiteDataTypeMemoryCache,
+            WKWebsiteDataTypeServiceWorkerRegistrations,
+            WKWebsiteDataTypeOfflineWebApplicationCache,
+        ]
+        store.removeData(ofTypes: types, modifiedSince: .distantPast) { [weak self] in
+            self?.webView.reload()
+        }
     }
 
     @objc func zoomIn() {
@@ -315,6 +334,8 @@ mainMenu.addItem(viewMenuItem)
 let viewMenu = NSMenu(title: "View")
 let reloadItem = viewMenu.addItem(withTitle: "Reload", action: #selector(AppDelegate.reloadPage), keyEquivalent: "r")
 reloadItem.target = delegate
+let reloadNoCacheItem = viewMenu.addItem(withTitle: "Reload Without Cache", action: #selector(AppDelegate.reloadWithoutCache), keyEquivalent: "R")
+reloadNoCacheItem.target = delegate
 viewMenu.addItem(.separator())
 let zoomInItem = viewMenu.addItem(withTitle: "Zoom In", action: #selector(AppDelegate.zoomIn), keyEquivalent: "+")
 zoomInItem.target = delegate
