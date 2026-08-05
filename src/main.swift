@@ -83,9 +83,67 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     private func isWhatsAppHost(_ host: String) -> Bool {
         host == "whatsapp.com" || host.hasSuffix(".whatsapp.com")
     }
+
+    @objc func reloadPage() {
+        webView.reload()
+    }
+
+    @objc func zoomIn() {
+        webView.magnification = min(webView.magnification + 0.1, 3.0)
+    }
+
+    @objc func zoomOut() {
+        webView.magnification = max(webView.magnification - 0.1, 0.3)
+    }
+
+    @objc func zoomActualSize() {
+        webView.magnification = 1.0
+    }
 }
 
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate
+
+let mainMenu = NSMenu()
+
+let appMenuItem = NSMenuItem()
+mainMenu.addItem(appMenuItem)
+let appMenu = NSMenu()
+appMenu.addItem(withTitle: "About WhatsApp Sandbox", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+appMenu.addItem(.separator())
+appMenu.addItem(withTitle: "Hide WhatsApp Sandbox", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+appMenu.addItem(withTitle: "Quit WhatsApp Sandbox", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+appMenuItem.submenu = appMenu
+
+let editMenuItem = NSMenuItem()
+mainMenu.addItem(editMenuItem)
+let editMenu = NSMenu(title: "Edit")
+editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+editMenuItem.submenu = editMenu
+
+let viewMenuItem = NSMenuItem()
+mainMenu.addItem(viewMenuItem)
+let viewMenu = NSMenu(title: "View")
+let reloadItem = viewMenu.addItem(withTitle: "Reload", action: #selector(AppDelegate.reloadPage), keyEquivalent: "r")
+reloadItem.target = delegate
+viewMenu.addItem(.separator())
+let zoomInItem = viewMenu.addItem(withTitle: "Zoom In", action: #selector(AppDelegate.zoomIn), keyEquivalent: "+")
+zoomInItem.target = delegate
+let zoomOutItem = viewMenu.addItem(withTitle: "Zoom Out", action: #selector(AppDelegate.zoomOut), keyEquivalent: "-")
+zoomOutItem.target = delegate
+let actualSizeItem = viewMenu.addItem(withTitle: "Actual Size", action: #selector(AppDelegate.zoomActualSize), keyEquivalent: "0")
+actualSizeItem.target = delegate
+viewMenuItem.submenu = viewMenu
+
+let windowMenuItem = NSMenuItem()
+mainMenu.addItem(windowMenuItem)
+let windowMenu = NSMenu(title: "Window")
+windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.miniaturize(_:)), keyEquivalent: "m")
+windowMenuItem.submenu = windowMenu
+
+app.mainMenu = mainMenu
 app.run()
