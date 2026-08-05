@@ -5,6 +5,42 @@ private let homeURL = URL(string: "https://web.whatsapp.com")!
 private let ephemeralSession = CommandLine.arguments.contains("--ephemeral")
 private let noScripts = CommandLine.arguments.contains("--no-scripts")
 private let noRetention = CommandLine.arguments.contains("--no-retention")
+private let debugMode = CommandLine.arguments.contains("--debug")
+
+private let debugScript = """
+(function () {
+  function dump(label) {
+    try {
+      var out = {
+        label: label,
+        readyState: document.readyState,
+        href: location.href,
+        bodyLen: document.body ? document.body.innerHTML.length : -1,
+        app: !!document.querySelector('#app'),
+        chatList: !!document.querySelector('#pane-side'),
+        mainPanel: !!document.querySelector('#main')
+      };
+      if (window.webkit && window.webkit.messageHandlers) {
+        window.webkit.messageHandlers.debugLog.postMessage(JSON.stringify(out));
+      }
+    } catch (e) {}
+  }
+  window.addEventListener('error', function (ev) {
+    try {
+      window.webkit.messageHandlers.debugLog.postMessage('JSERROR: ' + (ev.message || '') + ' @ ' + (ev.filename || '') + ':' + ev.lineno);
+    } catch (e) {}
+  });
+  window.addEventListener('unhandledrejection', function (ev) {
+    try {
+      var r = ev.reason;
+      window.webkit.messageHandlers.debugLog.postMessage('REJECTION: ' + (r && r.message ? r.message : String(r)));
+    } catch (e) {}
+  });
+  dump('start');
+  window.addEventListener('load', function () { setTimeout(function () { dump('load+3s'); }, 3000); });
+  setInterval(function () { dump('tick'); }, 15000);
+})();
+"""
 private let userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Safari/605.1.15"
 private let callStateScript = """
 (function () {
@@ -57,7 +93,7 @@ private let cleanupScript = """
     }
   }
   hideTextPromo();
-  setInterval(hideTextPromo, 2000);
+  setInterval(hideTextPromo, 10000);
 })();
 """
 
@@ -127,6 +163,16 @@ private let retentionScript = """
 })();
 """
 
+private let heartbeatScript = """
+(function () {
+  function beat() {
+    try { window.webkit.messageHandlers.heartbeat.postMessage('alive'); } catch (e) {}
+  }
+  beat();
+  setInterval(beat, 15000);
+})();
+"""
+
 final class CallBannerContainer: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? {
         nil
@@ -138,18 +184,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     private var webView: WKWebView!
     private var callBanner: NSView?
     private var callBannerLabel: NSTextField?
+    private var lastHeartbeat = Date.distantPast
+    private var hangRetries = 0
+    private var pageDidLoad = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = ephemeralSession ? .nonPersistent() : .default()
         configuration.mediaTypesRequiringUserActionForPlayback = []
         let contentController = WKUserContentController()
+        contentController.addUserScript(WKUserScript(source: heartbeatScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        contentController.add(self, name: "heartbeat")
         if !noScripts {
             contentController.addUserScript(WKUserScript(source: cleanupScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
             contentController.addUserScript(WKUserScript(source: callStateScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
             if !noRetention {
                 contentController.addUserScript(WKUserScript(source: retentionScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
             }
+        }
+        if debugMode {
+            contentController.addUserScript(WKUserScript(source: debugScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+            contentController.add(self, name: "debugLog")
         }
         contentController.add(self, name: "callState")
         configuration.userContentController = contentController
@@ -173,6 +228,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         NSApp.activate(ignoringOtherApps: true)
 
         webView.load(URLRequest(url: homeURL))
+
+        Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in
+            self?.checkHeartbeat()
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -225,6 +284,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         host == "whatsapp.com" || host.hasSuffix(".whatsapp.com")
     }
 
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        pageDidLoad = true
+        lastHeartbeat = Date()
+        hangRetries = 0
+    }
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        logDebug("web content process terminated")
+        handleDeadPage()
+    }
+
+    private func checkHeartbeat() {
+        guard pageDidLoad, Date().timeIntervalSince(lastHeartbeat) > 75 else { return }
+        logDebug("page unresponsive, reloading")
+        handleDeadPage()
+    }
+
+    private func handleDeadPage() {
+        hangRetries += 1
+        let delay: Double = hangRetries <= 3 ? 0.5 : 300
+        logDebug("reloading (attempt \(hangRetries))")
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            self?.webView.reload()
+        }
+    }
+
+    private func logDebug(_ text: String) {
+        guard debugMode else { return }
+        let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        let url = dir.appendingPathComponent("debug.log")
+        let line = "[\(Date())] \(text)\n"
+        if let handle = try? FileHandle(forWritingTo: url) {
+            handle.seekToEndOfFile()
+            handle.write(Data(line.utf8))
+            try? handle.close()
+        } else {
+            try? line.write(to: url, atomically: true, encoding: .utf8)
+        }
+    }
+
     @objc func reloadPage() {
         webView.reload()
     }
@@ -255,6 +354,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        if message.name == "heartbeat" {
+            lastHeartbeat = Date()
+            return
+        }
+        if message.name == "debugLog", let text = message.body as? String {
+            logDebug(text)
+            return
+        }
         guard message.name == "callState",
               let body = message.body as? [String: Any],
               let incoming = body["incoming"] as? Bool else { return }
