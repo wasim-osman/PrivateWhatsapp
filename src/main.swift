@@ -30,8 +30,13 @@ private let cleanupScript = """
   style.textContent = css;
   (document.head || document.documentElement).appendChild(style);
 
-  var RE = /get whatsapp for (mac|windows)/i;
+  var RES = [/get whatsapp for (mac|windows)/i, /message notifications are off/i];
   var TAGS = 'div,h1,h2,h3,h4,a,button,span,header,section,p';
+
+  function matches(s) {
+    for (var j = 0; j < RES.length; j++) if (RES[j].test(s)) return true;
+    return false;
+  }
 
   function hideTextPromo() {
     var els = document.querySelectorAll(TAGS);
@@ -40,9 +45,9 @@ private let cleanupScript = """
       if (el.style && el.style.display === 'none') continue;
       if (el.children.length > 12) continue;
       var t = el.textContent || '';
-      if (!RE.test(t)) continue;
+      if (!matches(t)) continue;
       var parent = el.parentElement;
-      while (parent && parent !== document.body && RE.test(parent.textContent || '') && (parent.textContent || '').length < 400) {
+      while (parent && parent !== document.body && matches(parent.textContent || '') && (parent.textContent || '').length < 400) {
         el = parent;
         parent = el.parentElement;
       }
