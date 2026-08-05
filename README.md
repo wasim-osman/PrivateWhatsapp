@@ -32,6 +32,7 @@ Attaching files still works — the OS file picker is explicit user input, not i
 - **Full menu bar** — ⌘Q, ⌘C/⌘V/⌘X/⌘A, ⌘R reload, ⌘+ / ⌘− zoom, ⌘M minimize
 - **Incoming call banner** — when someone calls, a non-clickable banner slides in at the top of the window for as long as the call rings, and the ringtone plays. Accepting isn't possible (mic is blocked), so pick up on your phone — the banner disappears when the ringing ends
 - **Clean UI** — the "Get WhatsApp for Mac" promo banner and the Meta AI button are hidden automatically
+- **15-day local retention** — messages older than 15 days are pruned from local storage every 15 minutes (login and chat list untouched; older history is re-fetched from WhatsApp's servers when you scroll back, then pruned again) so disk usage stays bounded
 - **`--ephemeral` mode** — launch with the flag for zero persistence: every quit forgets everything
 - **Generated icon** — WhatsApp-inspired, reproducible from `scripts/AppIcon.swift`
 

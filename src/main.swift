@@ -59,6 +59,72 @@ private let cleanupScript = """
 })();
 """
 
+private let retentionScript = """
+(function () {
+  var DAY = 24 * 60 * 60 * 1000;
+  var CUTOFF = 15 * DAY;
+  var DBS = ['wa-db', 'user-data'];
+
+  function valueTime(v) {
+    if (!v) return null;
+    var t = v.t;
+    if (typeof t === 'number') return t;
+    if (t && typeof t === 'object' && typeof t.low === 'number') return t.low;
+    var mt = v.messageTimestamp;
+    if (typeof mt === 'number') return mt;
+    if (mt && typeof mt === 'object' && typeof mt.low === 'number') return mt.low;
+    return null;
+  }
+
+  function prune() {
+    try {
+      for (var i = 0; i < DBS.length; i++) {
+        (function (name) {
+          var open = indexedDB.open(name);
+          open.onupgradeneeded = function () {
+            open.transaction.abort();
+          };
+          open.onsuccess = function () {
+            var db = open.result;
+            db.onversionchange = function () { db.close(); };
+            if (!db.objectStoreNames.contains('message')) { db.close(); return; }
+            var tx;
+            try { tx = db.transaction('message', 'readwrite'); } catch (e) { db.close(); return; }
+            var store = tx.objectStore('message');
+            var cursor = store.openCursor();
+            var cut = Date.now() - CUTOFF;
+            var pruned = 0;
+            cursor.onsuccess = function () {
+              var c = cursor.result;
+              if (!c) { db.close(); return; }
+              var ts = valueTime(c.value);
+              if (ts !== null) {
+                var ms = ts > 1e12 ? ts : ts * 1000;
+                if (ms < cut) {
+                  c.delete();
+                  pruned++;
+                }
+              }
+              c.continue();
+            };
+            cursor.onerror = function () { db.close(); };
+            tx.oncomplete = function () {
+              if (pruned > 0 && window.console) {
+                console.log('WhatsAppSandbox retention: pruned ' + pruned + ' old messages');
+              }
+            };
+          };
+          open.onerror = function () {};
+        })(DBS[i]);
+      }
+    } catch (e) {}
+  }
+
+  setTimeout(prune, 20000);
+  setInterval(prune, 15 * 60 * 1000);
+})();
+"""
+
 final class CallBannerContainer: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? {
         nil
@@ -78,6 +144,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         let contentController = WKUserContentController()
         contentController.addUserScript(WKUserScript(source: cleanupScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
         contentController.addUserScript(WKUserScript(source: callStateScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        contentController.addUserScript(WKUserScript(source: retentionScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
         contentController.add(self, name: "callState")
         configuration.userContentController = contentController
 
