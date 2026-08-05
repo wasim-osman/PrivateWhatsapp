@@ -4,14 +4,41 @@ import WebKit
 private let homeURL = URL(string: "https://web.whatsapp.com")!
 private let ephemeralSession = CommandLine.arguments.contains("--ephemeral")
 private let userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Safari/605.1.15"
+private let callStateScript = """
+(function () {
+  function check() {
+    var accept = document.querySelector('[aria-label^="Accept"]');
+    var decline = document.querySelector('[aria-label^="Decline"]');
+    var incoming = !!(accept && decline);
+    if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.callState) {
+      window.webkit.messageHandlers.callState.postMessage({ incoming: incoming });
+    }
+  }
+  check();
+  setInterval(check, 1000);
+})();
+"""
 
-final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNavigationDelegate {
+final class CallBannerContainer: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
+}
+
+final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNavigationDelegate, WKScriptMessageHandler {
     private var window: NSWindow!
     private var webView: WKWebView!
+    private var callBanner: NSView?
+    private var callBannerLabel: NSTextField?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = ephemeralSession ? .nonPersistent() : .default()
+        configuration.mediaTypesRequiringUserActionForPlayback = []
+        let contentController = WKUserContentController()
+        contentController.addUserScript(WKUserScript(source: callStateScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        contentController.add(self, name: "callState")
+        configuration.userContentController = contentController
 
         webView = WKWebView(frame: .zero, configuration: configuration)
         webView.customUserAgent = userAgent
@@ -98,6 +125,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
 
     @objc func zoomActualSize() {
         webView.magnification = 1.0
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.name == "callState",
+              let body = message.body as? [String: Any],
+              let incoming = body["incoming"] as? Bool else { return }
+        if incoming {
+            showCallBanner()
+        } else {
+            hideCallBanner()
+        }
+    }
+
+    private func showCallBanner() {
+        if callBanner == nil, let content = window.contentView {
+            let container = CallBannerContainer(frame: NSRect(x: 0, y: content.bounds.height - 52, width: content.bounds.width, height: 52))
+            container.autoresizingMask = [.width, .minYMargin]
+            let label = NSTextField(labelWithString: "Incoming call — answer on another device")
+            label.textColor = .white
+            label.font = NSFont.systemFont(ofSize: 13, weight: .medium)
+            label.sizeToFit()
+            let pill = NSView(frame: NSRect(x: 0, y: 0, width: label.frame.width + 36, height: 34))
+            pill.wantsLayer = true
+            pill.layer?.backgroundColor = NSColor(calibratedRed: 0.07, green: 0.549, blue: 0.494, alpha: 0.95).cgColor
+            pill.layer?.cornerRadius = 17
+            label.setFrameOrigin(NSPoint(x: 18, y: (34 - label.frame.height) / 2))
+            pill.addSubview(label)
+            container.addSubview(pill)
+            pill.setFrameOrigin(NSPoint(x: (container.bounds.width - pill.frame.width) / 2, y: 9))
+            content.addSubview(container)
+            callBanner = container
+            callBannerLabel = label
+        }
+        guard let banner = callBanner else { return }
+        banner.alphaValue = 0
+        banner.isHidden = false
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.25
+            banner.animator().alphaValue = 1
+        }
+    }
+
+    private func hideCallBanner() {
+        guard let banner = callBanner, !banner.isHidden else { return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.25
+            banner.animator().alphaValue = 0
+        } completionHandler: {
+            banner.isHidden = true
+        }
     }
 }
 

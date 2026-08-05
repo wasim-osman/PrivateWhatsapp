@@ -6,7 +6,7 @@ Native **Swift + WKWebView** — no Electron, no Chromium — running inside the
 
 ## Why
 
-Official desktop messengers are large, privileged applications. This wrapper takes the opposite approach: WhatsApp Web lives in an OS-enforced sandbox that blocks access to your machine — no filesystem, no camera, no microphone, no location, no notifications — while still letting you chat, send attachments, and make audio calls.
+Official desktop messengers are large, privileged applications. This wrapper takes the opposite approach: WhatsApp Web lives in an OS-enforced sandbox that blocks access to your machine — no filesystem, no camera, no microphone, no location, no notifications — while still letting you chat and send attachments.
 
 ## Security model
 
@@ -30,12 +30,13 @@ Attaching files still works — the OS file picker is explicit user input, not i
 - **Persistent login** — scan the QR code once; your session survives quitting
 - **Modern Safari user agent** — no "your browser is out of date" screen
 - **Full menu bar** — ⌘Q, ⌘C/⌘V/⌘X/⌘A, ⌘R reload, ⌘+ / ⌘− zoom, ⌘M minimize
+- **Incoming call banner** — when someone calls, a non-clickable banner slides in at the top of the window for as long as the call rings, and the ringtone plays. Accepting isn't possible (mic is blocked), so pick up on your phone — the banner disappears when the ringing ends
 - **`--ephemeral` mode** — launch with the flag for zero persistence: every quit forgets everything
 - **Generated icon** — WhatsApp-inspired, reproducible from `scripts/AppIcon.swift`
 
 ## Install
 
-1. Download `WhatsAppSandbox-1.0.dmg` from the [Releases](https://github.com/wasim-osman/PrivateWhatsapp/releases) section.
+1. Download the latest `.dmg` from the [Releases](https://github.com/wasim-osman/PrivateWhatsapp/releases) section.
 2. Open the DMG and drag **WhatsAppSandbox.app** into your Applications folder.
 3. First launch: right-click the app → **Open** (it's ad-hoc signed, so Gatekeeper asks once — after that it runs normally).
 
