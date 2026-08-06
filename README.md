@@ -1,4 +1,4 @@
-# WhatsApp Sandbox
+# PrivateWhatsapp
 
 A hardened, sandboxed wrapper for [WhatsApp Web](https://web.whatsapp.com/) for macOS — designed as a **text-chat-only desktop companion**.
 
