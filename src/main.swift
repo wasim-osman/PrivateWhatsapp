@@ -207,8 +207,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     private var lastHeartbeat = Date.distantPast
     private var hangRetries = 0
     private var pageDidLoad = false
+    private var windowBadSince: Date?
+    private var lastWindowLog: String = ""
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        makeWebView()
+        makeWindow()
+        webView.load(URLRequest(url: homeURL))
+
+        Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
+            self?.checkHeartbeat()
+            self?.checkWindow()
+        }
+    }
+
+    private func makeWebView() {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = ephemeralSession ? .nonPersistent() : .default()
         configuration.mediaTypesRequiringUserActionForPlayback = []
@@ -234,7 +247,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         webView.navigationDelegate = self
         webView.uiDelegate = self
         webView.allowsMagnification = true
+    }
 
+    private func makeWindow() {
         window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1280, height: 860),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -246,12 +261,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-
-        webView.load(URLRequest(url: homeURL))
-
-        Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
-            self?.checkHeartbeat()
-        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -343,17 +352,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         }
     }
 
+    private func checkWindow() {
+        guard let win = window else { return }
+        let healthy = Date().timeIntervalSince(lastHeartbeat) < 40
+        let state = "winVisible=\(win.isVisible) mini=\(win.isMiniaturized) onScreen=\(win.screen != nil) frame=\(String(describing: win.frame))"
+        if state != lastWindowLog {
+            logDebug("window: \(state)")
+            lastWindowLog = state
+        }
+        guard healthy else { return }
+        let visible = win.isVisible && win.screen != nil
+        if visible {
+            windowBadSince = nil
+            return
+        }
+        if windowBadSince == nil {
+            windowBadSince = Date()
+            logDebug("window missing while page healthy")
+            return
+        }
+        if Date().timeIntervalSince(windowBadSince!) > 20 {
+            logDebug("restoring window")
+            win.orderFront(nil)
+            win.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            var frame = win.frame
+            frame.size.width += 1
+            win.setFrame(frame, display: true)
+        }
+        if Date().timeIntervalSince(windowBadSince!) > 60 {
+            logDebug("window unrepairable, recreating")
+            windowBadSince = Date()
+            webView.stopLoading()
+            webView.removeFromSuperview()
+            makeWebView()
+            win.contentView = webView
+            win.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            webView.load(URLRequest(url: homeURL))
+        }
+    }
+
     private func relaunchApp() {
-        let bundle = Bundle.main.bundleURL
-        let executable = bundle.appendingPathComponent("Contents/MacOS/WhatsAppSandbox")
-        var args = ProcessInfo.processInfo.arguments.dropFirst().map { String($0) }
+        let executable = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/WhatsAppSandbox")
         if FileManager.default.fileExists(atPath: executable.path) {
             let process = Process()
             process.executableURL = executable
-            process.arguments = args
+            process.arguments = ProcessInfo.processInfo.arguments.dropFirst().map { String($0) }
             try? process.run()
         }
-        NSApp.terminate(nil)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            NSApp.terminate(nil)
+        }
     }
 
     private func logDebug(_ text: String) {
