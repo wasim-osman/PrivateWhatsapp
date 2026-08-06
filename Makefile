@@ -8,7 +8,7 @@ BIN        := $(MACOS_DIR)/$(APP_NAME)
 PLIST_SRC  := src/Info.plist
 ENT_SRC    := src/app.entitlements
 ICNS_SRC   := src/AppIcon.icns
-DMG_NAME   := WhatsAppSandbox-1.0.9.dmg
+DMG_NAME   := WhatsAppSandbox-1.0.10.dmg
 
 .PHONY: all icon dmg run install uninstall clean verify
 

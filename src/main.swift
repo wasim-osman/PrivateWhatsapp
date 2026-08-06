@@ -209,6 +209,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     private var pageDidLoad = false
     private var windowBadSince: Date?
     private var lastWindowLog: String = ""
+    private var blankSince: Date?
+    private var blankRetries = 0
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         makeWebView()
@@ -218,6 +220,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             self?.checkHeartbeat()
             self?.checkWindow()
+            self?.checkSnapshot()
         }
     }
 
@@ -391,6 +394,73 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             NSApp.activate(ignoringOtherApps: true)
             webView.load(URLRequest(url: homeURL))
         }
+    }
+
+    private func checkSnapshot() {
+        guard let win = window, win.isVisible, !win.isMiniaturized, win.screen != nil else { return }
+        guard pageDidLoad else { return }
+        webView.takeSnapshot(with: nil) { [weak self] image, error in
+            guard let self = self else { return }
+            if let error = error {
+                self.logDebug("snapshot error: \(error.localizedDescription)")
+                return
+            }
+            let blank = image.map { self.isBlank($0) } ?? true
+            if !blank {
+                if self.blankSince != nil {
+                    self.logDebug("snapshot recovered")
+                }
+                self.blankSince = nil
+                self.blankRetries = 0
+                return
+            }
+            if self.blankSince == nil {
+                self.blankSince = Date()
+                self.logDebug("snapshot blank detected")
+                return
+            }
+            let elapsed = Date().timeIntervalSince(self.blankSince!)
+            if elapsed > 20 && self.blankRetries == 0 {
+                self.blankRetries = 1
+                self.logDebug("snapshot blank 20s+, nudging window")
+                var frame = win.frame
+                frame.origin.x += 2
+                win.setFrame(frame, display: true)
+                frame.origin.x -= 2
+                win.setFrame(frame, display: true)
+                self.webView.setNeedsDisplay(self.webView.bounds)
+            } else if elapsed > 50 && self.blankRetries == 1 {
+                self.blankRetries = 2
+                self.logDebug("snapshot blank 50s+, reloading page")
+                self.webView.reload()
+            } else if elapsed > 100 && self.blankRetries == 2 {
+                self.logDebug("snapshot blank 100s+, relaunching app")
+                self.relaunchApp()
+            }
+        }
+    }
+
+    private func isBlank(_ image: NSImage) -> Bool {
+        guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return true }
+        let width = 64, height = 40
+        let bytesPerRow = width * 4
+        var pixels = [UInt8](repeating: 0, count: height * bytesPerRow)
+        guard let ctx = CGContext(data: &pixels, width: width, height: height, bitsPerComponent: 8,
+                                  bytesPerRow: bytesPerRow, space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return true }
+        ctx.interpolationQuality = .medium
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: width, height: height))
+        var sum: Double = 0
+        var sumSq: Double = 0
+        let n = width * height
+        for i in stride(from: 0, to: pixels.count, by: 4) {
+            let lum = 0.2126 * Double(pixels[i]) + 0.7152 * Double(pixels[i + 1]) + 0.0722 * Double(pixels[i + 2])
+            sum += lum
+            sumSq += lum * lum
+        }
+        let mean = sum / Double(n)
+        let variance = sumSq / Double(n) - mean * mean
+        return variance < 25
     }
 
     private func relaunchApp() {
