@@ -41,7 +41,7 @@ private let debugScript = """
   });
   dump('start');
   window.addEventListener('load', function () { setTimeout(function () { dump('load+3s'); }, 3000); });
-  setInterval(function () { dump('tick'); }, 15000);
+  setInterval(function () { dump('tick'); }, 60000);
 })();
 """
 private let userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Safari/605.1.15"
@@ -56,7 +56,7 @@ private let callStateScript = """
     }
   }
   check();
-  setInterval(check, 1000);
+  setInterval(check, 5000);
 })();
 """
 
@@ -96,7 +96,7 @@ private let cleanupScript = """
     }
   }
   hideTextPromo();
-  setInterval(hideTextPromo, 10000);
+  setTimeout(hideTextPromo, 5000);
 })();
 """
 
@@ -121,8 +121,15 @@ private let retentionScript = """
     return null;
   }
 
+  function isTyping() {
+    var el = document.activeElement;
+    if (!el) return false;
+    var tag = (el.tagName || '').toLowerCase();
+    return tag === 'textarea' || el.isContentEditable;
+  }
+
   function prune() {
-    if (running || document.hidden) return;
+    if (running || document.hidden || isTyping()) return;
     running = true;
     var cut = Date.now() - CUTOFF;
     var index = 0;
@@ -178,7 +185,7 @@ private let retentionScript = """
     setTimeout(nextDB, 0);
   }
 
-  setTimeout(prune, 30000);
+  setTimeout(prune, 300000);
   setInterval(prune, 30 * 60 * 1000);
 })();
 """
@@ -209,8 +216,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     private var pageDidLoad = false
     private var windowBadSince: Date?
     private var lastWindowLog: String = ""
-    private var blankSince: Date?
-    private var blankRetries = 0
+    private let logLock = NSLock()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         makeWebView()
@@ -220,8 +226,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             self?.checkHeartbeat()
             self?.checkWindow()
-            self?.checkSnapshot()
         }
+        startBackgroundWatchdog()
     }
 
     private func makeWebView() {
@@ -396,73 +402,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         }
     }
 
-    private func checkSnapshot() {
-        guard let win = window, win.isVisible, !win.isMiniaturized, win.screen != nil else { return }
-        guard pageDidLoad else { return }
-        webView.takeSnapshot(with: nil) { [weak self] image, error in
-            guard let self = self else { return }
-            if let error = error {
-                self.logDebug("snapshot error: \(error.localizedDescription)")
-                return
-            }
-            let blank = image.map { self.isBlank($0) } ?? true
-            if !blank {
-                if self.blankSince != nil {
-                    self.logDebug("snapshot recovered")
-                }
-                self.blankSince = nil
-                self.blankRetries = 0
-                return
-            }
-            if self.blankSince == nil {
-                self.blankSince = Date()
-                self.logDebug("snapshot blank detected")
-                return
-            }
-            let elapsed = Date().timeIntervalSince(self.blankSince!)
-            if elapsed > 20 && self.blankRetries == 0 {
-                self.blankRetries = 1
-                self.logDebug("snapshot blank 20s+, nudging window")
-                var frame = win.frame
-                frame.origin.x += 2
-                win.setFrame(frame, display: true)
-                frame.origin.x -= 2
-                win.setFrame(frame, display: true)
-                self.webView.setNeedsDisplay(self.webView.bounds)
-            } else if elapsed > 50 && self.blankRetries == 1 {
-                self.blankRetries = 2
-                self.logDebug("snapshot blank 50s+, reloading page")
-                self.webView.reload()
-            } else if elapsed > 100 && self.blankRetries == 2 {
-                self.logDebug("snapshot blank 100s+, relaunching app")
-                self.relaunchApp()
-            }
-        }
-    }
-
-    private func isBlank(_ image: NSImage) -> Bool {
-        guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return true }
-        let width = 64, height = 40
-        let bytesPerRow = width * 4
-        var pixels = [UInt8](repeating: 0, count: height * bytesPerRow)
-        guard let ctx = CGContext(data: &pixels, width: width, height: height, bitsPerComponent: 8,
-                                  bytesPerRow: bytesPerRow, space: CGColorSpaceCreateDeviceRGB(),
-                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return true }
-        ctx.interpolationQuality = .medium
-        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: width, height: height))
-        var sum: Double = 0
-        var sumSq: Double = 0
-        let n = width * height
-        for i in stride(from: 0, to: pixels.count, by: 4) {
-            let lum = 0.2126 * Double(pixels[i]) + 0.7152 * Double(pixels[i + 1]) + 0.0722 * Double(pixels[i + 2])
-            sum += lum
-            sumSq += lum * lum
-        }
-        let mean = sum / Double(n)
-        let variance = sumSq / Double(n) - mean * mean
-        return variance < 25
-    }
-
     private func relaunchApp() {
         let executable = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/WhatsAppSandbox")
         if FileManager.default.fileExists(atPath: executable.path) {
@@ -476,8 +415,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         }
     }
 
+    private func startBackgroundWatchdog() {
+        DispatchQueue.global().asyncAfter(deadline: .now() + 10) { [weak self] in
+            self?.backgroundWatchdogLoop()
+        }
+    }
+
+    private func backgroundWatchdogLoop() {
+        let age = Date().timeIntervalSince(lastHeartbeat)
+        if age > 60 {
+            logDebug("bg watchdog: heartbeat stale \(Int(age))s, relaunching")
+            let executable = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/WhatsAppSandbox")
+            if FileManager.default.fileExists(atPath: executable.path) {
+                let process = Process()
+                process.executableURL = executable
+                process.arguments = ProcessInfo.processInfo.arguments.dropFirst().map { String($0) }
+                try? process.run()
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 3) {
+                exit(0)
+            }
+            return
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 5) { [weak self] in
+            self?.backgroundWatchdogLoop()
+        }
+    }
+
     private func logDebug(_ text: String) {
         guard debugMode else { return }
+        logLock.lock()
+        defer { logLock.unlock() }
         let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
         let url = dir.appendingPathComponent("debug.log")
         let line = "[\(Date())] \(text)\n"
