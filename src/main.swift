@@ -13,6 +13,14 @@ private let debugScript = """
     try {
       var pane = document.querySelector('#pane-side');
       var main = document.querySelector('#main');
+      var callBtns = [];
+      var headerEls = document.querySelectorAll('#main [aria-label]');
+      for (var hx = 0; hx < headerEls.length; hx++) {
+        var lbl2 = headerEls[hx].getAttribute('aria-label') || '';
+        if (/call/i.test(lbl2)) {
+          callBtns.push(lbl2 + ':' + (getComputedStyle(headerEls[hx]).display !== 'none' ? 'shown' : 'hidden'));
+        }
+      }
       var out = {
         label: label,
         readyState: document.readyState,
@@ -21,7 +29,8 @@ private let debugScript = """
         app: !!document.querySelector('#app'),
         chatList: !!pane,
         chatListVisible: pane ? getComputedStyle(pane).display !== 'none' : false,
-        mainVisible: main ? getComputedStyle(main).display !== 'none' : false
+        mainVisible: main ? getComputedStyle(main).display !== 'none' : false,
+        callBtns: callBtns
       };
       if (window.webkit && window.webkit.messageHandlers) {
         window.webkit.messageHandlers.debugLog.postMessage(JSON.stringify(out));
@@ -65,6 +74,10 @@ private let cleanupScript = """
   var css = [
     '[data-testid="meta-ai-button"]',
     '[data-testid="desktopDownloadBanner"]',
+    '[data-testid="call-audio"]',
+    '[data-testid="call-video"]',
+    '[data-testid="video-call"]',
+    '#main [aria-label*="call" i]',
     '[aria-label="Meta AI"]'
   ].join(',') + '{display:none !important;visibility:hidden !important;pointer-events:none !important;}';
   var style = document.createElement('style');
@@ -97,6 +110,27 @@ private let cleanupScript = """
   }
   hideTextPromo();
   setTimeout(hideTextPromo, 5000);
+
+  var MENU_ITEMS = ['Send call link', 'New group call'];
+
+  function hideCallMenuItems() {
+    var menus = document.querySelectorAll('[role="menu"]');
+    for (var m = 0; m < menus.length; m++) {
+      var items = menus[m].querySelectorAll('li');
+      for (var i = 0; i < items.length; i++) {
+        var li = items[i];
+        if (li.style && li.style.display === 'none') continue;
+        var t = (li.textContent || '').replace(/\\s+/g, ' ').trim();
+        for (var j = 0; j < MENU_ITEMS.length; j++) {
+          if (t.indexOf(MENU_ITEMS[j]) !== -1) {
+            li.style.display = 'none';
+            break;
+          }
+        }
+      }
+    }
+  }
+  setInterval(hideCallMenuItems, 2000);
 })();
 """
 
