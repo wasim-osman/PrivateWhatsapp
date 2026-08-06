@@ -105,6 +105,10 @@ private let retentionScript = """
   var DAY = 24 * 60 * 60 * 1000;
   var CUTOFF = 15 * DAY;
   var DBS = ['wa-db', 'user-data'];
+  var BATCH = 200;
+  var BATCHES = 5;
+  var GAP = 1500;
+  var running = false;
 
   function valueTime(v) {
     if (!v) return null;
@@ -118,51 +122,64 @@ private let retentionScript = """
   }
 
   function prune() {
-    try {
-      for (var i = 0; i < DBS.length; i++) {
-        (function (name) {
-          var open = indexedDB.open(name);
-          open.onupgradeneeded = function () {
-            open.transaction.abort();
-          };
-          open.onsuccess = function () {
-            var db = open.result;
-            db.onversionchange = function () { db.close(); };
-            if (!db.objectStoreNames.contains('message')) { db.close(); return; }
-            var tx;
-            try { tx = db.transaction('message', 'readwrite'); } catch (e) { db.close(); return; }
-            var store = tx.objectStore('message');
-            var cursor = store.openCursor();
-            var cut = Date.now() - CUTOFF;
-            var pruned = 0;
-            cursor.onsuccess = function () {
-              var c = cursor.result;
-              if (!c) { db.close(); return; }
-              var ts = valueTime(c.value);
-              if (ts !== null) {
-                var ms = ts > 1e12 ? ts : ts * 1000;
-                if (ms < cut) {
-                  c.delete();
-                  pruned++;
-                }
-              }
-              c.continue();
-            };
-            cursor.onerror = function () { db.close(); };
-            tx.oncomplete = function () {
-              if (pruned > 0 && window.console) {
-                console.log('WhatsAppSandbox retention: pruned ' + pruned + ' old messages');
-              }
-            };
-          };
-          open.onerror = function () {};
-        })(DBS[i]);
-      }
-    } catch (e) {}
+    if (running || document.hidden) return;
+    running = true;
+    var cut = Date.now() - CUTOFF;
+    var index = 0;
+    var done = 0;
+    var pruned = 0;
+    var db = null;
+
+    function nextDB() {
+      if (index >= DBS.length) { running = false; return; }
+      var name = DBS[index++];
+      var open = indexedDB.open(name);
+      open.onupgradeneeded = function () { open.transaction.abort(); };
+      open.onsuccess = function () {
+        db = open.result;
+        db.onversionchange = function () { db.close(); };
+        if (!db.objectStoreNames.contains('message')) { db.close(); nextDB(); return; }
+        pruneOne();
+      };
+      open.onerror = function () { running = false; };
+    }
+
+    function pruneOne() {
+      if (!db) { nextDB(); return; }
+      if (done >= BATCHES) { db.close(); db = null; nextDB(); return; }
+      var tx;
+      try { tx = db.transaction('message', 'readwrite'); } catch (e) { db.close(); nextDB(); return; }
+      var store = tx.objectStore('message');
+      var cursor = store.openCursor();
+      var count = 0;
+      var batchPruned = 0;
+      cursor.onsuccess = function () {
+        var c = cursor.result;
+        if (!c || count >= BATCH) return;
+        count++;
+        var ts = valueTime(c.value);
+        if (ts !== null) {
+          var ms = ts > 1e12 ? ts : ts * 1000;
+          if (ms < cut) { c.delete(); batchPruned++; }
+        }
+        c.continue();
+      };
+      cursor.onerror = function () {};
+      tx.oncomplete = function () {
+        done++;
+        pruned += batchPruned;
+        if (pruned > 0 && window.console) {
+          console.log('WhatsAppSandbox retention: pruned ' + pruned + ' old messages');
+        }
+        setTimeout(pruneOne, GAP);
+      };
+    }
+
+    setTimeout(nextDB, 0);
   }
 
-  setTimeout(prune, 20000);
-  setInterval(prune, 15 * 60 * 1000);
+  setTimeout(prune, 30000);
+  setInterval(prune, 30 * 60 * 1000);
 })();
 """
 
@@ -232,7 +249,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
 
         webView.load(URLRequest(url: homeURL))
 
-        Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in
+        Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             self?.checkHeartbeat()
         }
     }
@@ -295,22 +312,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         logDebug("web content process terminated")
+        hangRetries = 0
         handleDeadPage()
     }
 
     private func checkHeartbeat() {
-        guard pageDidLoad, Date().timeIntervalSince(lastHeartbeat) > 75 else { return }
-        logDebug("page unresponsive, reloading")
+        guard pageDidLoad, Date().timeIntervalSince(lastHeartbeat) > 25 else { return }
+        logDebug("page unresponsive, recovering")
         handleDeadPage()
     }
 
     private func handleDeadPage() {
         hangRetries += 1
-        let delay: Double = hangRetries <= 3 ? 0.5 : 300
-        logDebug("reloading (attempt \(hangRetries))")
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+        if hangRetries >= 3 {
+            logDebug("recovery failed after \(hangRetries - 1) attempts, relaunching app")
+            relaunchApp()
+            return
+        }
+        logDebug("recovering (attempt \(hangRetries))")
+        killWebContentProcesses()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
             self?.webView.reload()
         }
+    }
+
+    private func killWebContentProcesses() {
+        let selector = NSSelectorFromString("_killWebContentProcess")
+        if webView.responds(to: selector) {
+            webView.perform(selector)
+        }
+    }
+
+    private func relaunchApp() {
+        let bundle = Bundle.main.bundleURL
+        let executable = bundle.appendingPathComponent("Contents/MacOS/WhatsAppSandbox")
+        var args = ProcessInfo.processInfo.arguments.dropFirst().map { String($0) }
+        if FileManager.default.fileExists(atPath: executable.path) {
+            let process = Process()
+            process.executableURL = executable
+            process.arguments = args
+            try? process.run()
+        }
+        NSApp.terminate(nil)
     }
 
     private func logDebug(_ text: String) {
@@ -359,6 +402,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         if message.name == "heartbeat" {
             lastHeartbeat = Date()
+            hangRetries = 0
             return
         }
         if message.name == "debugLog", let text = message.body as? String {
