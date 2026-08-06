@@ -11,14 +11,17 @@ private let debugScript = """
 (function () {
   function dump(label) {
     try {
+      var pane = document.querySelector('#pane-side');
+      var main = document.querySelector('#main');
       var out = {
         label: label,
         readyState: document.readyState,
         href: location.href,
         bodyLen: document.body ? document.body.innerHTML.length : -1,
         app: !!document.querySelector('#app'),
-        chatList: !!document.querySelector('#pane-side'),
-        mainPanel: !!document.querySelector('#main')
+        chatList: !!pane,
+        chatListVisible: pane ? getComputedStyle(pane).display !== 'none' : false,
+        mainVisible: main ? getComputedStyle(main).display !== 'none' : false
       };
       if (window.webkit && window.webkit.messageHandlers) {
         window.webkit.messageHandlers.debugLog.postMessage(JSON.stringify(out));
@@ -68,7 +71,7 @@ private let cleanupScript = """
   style.textContent = css;
   (document.head || document.documentElement).appendChild(style);
 
-  var RES = [/get whatsapp for (mac|windows)/i, /message notifications are off/i];
+  var RES = [/get whatsapp for (mac|windows)/i];
   var TAGS = 'div,h1,h2,h3,h4,a,button,span,header,section,p';
 
   function matches(s) {
@@ -85,7 +88,7 @@ private let cleanupScript = """
       var t = el.textContent || '';
       if (!matches(t)) continue;
       var parent = el.parentElement;
-      while (parent && parent !== document.body && matches(parent.textContent || '') && (parent.textContent || '').length < 400) {
+      while (parent && parent !== document.body && matches(parent.textContent || '') && (parent.textContent || '').length < 200) {
         el = parent;
         parent = el.parentElement;
       }
